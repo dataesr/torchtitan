@@ -101,6 +101,7 @@ def _build_qwen3_layers(
     hidden_dim: int,
     attn_backend: str,
     rope: RoPE.Config,
+    qk_norm: bool = True,
 ) -> list[TransformerBlock.Config]:
     """Build per-layer configs for dense Qwen3 models."""
     inner_attention = get_attention_config(attn_backend)
@@ -119,7 +120,7 @@ def _build_qwen3_layers(
                     wo_param_init=_LINEAR_INIT,
                     inner_attention=inner_attention,
                     rope=rope,
-                    qk_norm=_qwen3_norm(head_dim),
+                    qk_norm=_qwen3_norm(head_dim) if qk_norm else None,
                 ),
                 feed_forward=make_ffn_config(
                     dim=dim,
@@ -263,6 +264,44 @@ def _0_6b(attn_backend: str, *, seq_len: int) -> Qwen3Model.Config:
                 max_context_length=seq_len,
                 theta=1000000.0,
             ),
+        ),
+    )
+
+
+def _balanced_600m(attn_backend: str, *, seq_len: int) -> Qwen3Model.Config:
+    dim = 1024
+    head_dim = 64
+    n_layers = 48
+    vocab_size = 65536
+    return Qwen3Model.Config(
+        vocab_size=vocab_size,
+        dim=dim,
+        norm=_qwen3_norm(dim),
+        enable_weight_tying=True,
+        tok_embeddings=Embedding.Config(
+            num_embeddings=vocab_size,
+            embedding_dim=dim,
+            param_init=_EMBEDDING_SKIP_INIT,
+        ),
+        lm_head=Linear.Config(
+            in_features=dim,
+            out_features=vocab_size,
+            param_init=_LINEAR_INIT,
+        ),
+        layers=_build_qwen3_layers(
+            n_layers=n_layers,
+            dim=dim,
+            n_heads=16,
+            n_kv_heads=4,
+            head_dim=head_dim,
+            hidden_dim=2816,
+            attn_backend=attn_backend,
+            rope=CosSinRoPE.Config(
+                dim=head_dim,
+                max_context_length=seq_len,
+                theta=1000000.0,
+            ),
+            qk_norm=False,
         ),
     )
 
@@ -575,6 +614,7 @@ def _235b_a22b(
 qwen3_configs = {
     "debugmodel": (_debugmodel, 4096),
     "0.6B": (_0_6b, 40960),
+    "balanced-600M": (_balanced_600m, 4096),
     "1.7B": (_1_7b, 40960),
     "4B": (_4b, 40960),
     "8B": (_8b, 40960),
